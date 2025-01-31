@@ -90,7 +90,7 @@ fn setup(
     ));
 
     commands.spawn(SceneRoot(asset_server.load(
-        GltfAssetLabel::Scene(0).from_asset("scene/scene.glb"),
+        GltfAssetLabel::Scene(0).from_asset("scene/scene_wn.glb"),
     )));
 }
 
