@@ -1,3 +1,5 @@
+use rand::Rng;
+
 use bevy::{
     prelude::*, 
     window::*,
@@ -11,12 +13,7 @@ enum GameState {
     #[default]
     Loading,
     Loaded,
-    Spawned,
-    //Level1,
-    //Level2,
-    //Level3,
-    //Level4,
-    //Level5
+    Play
 }
 
 #[derive(Component)]
@@ -26,15 +23,19 @@ struct CameraRotation(f32, f32);
 struct Ball;
 
 #[derive(Resource)]
-struct Score(i32);
+struct Level(i32);
 
 #[derive(Component)]
-struct ScoreText;
+struct LevelText;
 
 #[derive(Default, Resource)]
 struct GameAssets {
     scene: Handle<Scene>,
-    extra: Handle<Scene>,
+    //extra: Handle<Scene>,
+    row1: Handle<Scene>,
+    row2: Handle<Scene>,
+    row3: Handle<Scene>,
+    row4: Handle<Scene>,
     bin: Handle<Scene>,
     ball: Handle<Scene>,
 }
@@ -46,15 +47,17 @@ fn game_run() {
             color: Color::default(),
             brightness: 400.0,
         })
-        .insert_resource(Score(0))
+        .insert_resource(TimestepMode::Fixed {
+            dt: 0.02, 
+            substeps: 1
+        })
+        .insert_resource(Level(1))
         
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            watch_for_changes_override: Some(true),
-            ..Default::default()
-        }).set(WindowPlugin {
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Bin Throw".to_string(),
                 present_mode: PresentMode::AutoNoVsync,
+                fit_canvas_to_parent: true,
                 ..default()
             }),
             ..default()
@@ -66,11 +69,11 @@ fn game_run() {
         .add_systems(OnEnter(GameState::Loading), start_assets_loading)
         .add_systems(Update, check_if_loaded.run_if(in_state(GameState::Loading)))
         .add_systems(OnEnter(GameState::Loaded), setup)
-        .add_systems(OnEnter(GameState::Spawned), setup_colliders)
+        .add_systems(OnEnter(GameState::Play), setup_colliders)
 
-        .add_systems(Update, look_mouse.run_if(in_state(GameState::Spawned)))
-        .add_systems(Update, spawn_ball.run_if(in_state(GameState::Spawned)))
-        .add_systems(Update, check_ball.run_if(in_state(GameState::Spawned)))
+        .add_systems(Update, look_mouse.run_if(in_state(GameState::Play)))
+        .add_systems(Update, spawn_ball.run_if(in_state(GameState::Play)))
+        .add_systems(Update, check_ball.run_if(in_state(GameState::Play)))
 
         .run();
 }
@@ -138,25 +141,38 @@ fn spawn_ball(
 
 fn check_ball(
     mut commands: Commands,
-    mut score: ResMut<Score>,
+    mut score: ResMut<Level>,
     balls: Query<Entity, With<Ball>>,
-    text: Single<&mut Text, With<ScoreText>>,
-    rapier_context: Single<&RapierContext>
+    text: Single<&mut Text, With<LevelText>>,
+    rapier_context: Single<&RapierContext>,
+    q_camera: Single<&mut Transform, With<Camera>>, 
 ) {
     let shape = Collider::ball(0.33/2.0);
     let shape_pos = Vec3::new(3.5917, 0.15, -3.6764);
     let shape_rot = Quat::IDENTITY;
     let filter = QueryFilter::from(QueryFilterFlags::ONLY_DYNAMIC);
     let mut t = text.into_inner();
+    let mut camera = q_camera.into_inner();
 
     rapier_context.intersections_with_shape(shape_pos, shape_rot, &shape, filter, |_| {
         score.0 += 1;
-        t.0 = format!("Score: {}", score.0).to_string();
+        t.0 = format!("Level {}", score.0).to_string();
+
+        if score.0 > 4 {
+            score.0 = 4;
+            t.0 = "Game Complete!".to_string();
+        }
 
         for entity in balls.iter() {
             commands.entity(entity).despawn();
         }
 
+        let xs = [3_f32, 1_f32, -1_f32, -3_f32];
+        let x = xs[rand::thread_rng().gen_range(0..4)];
+        let y = 1.25;
+        let z = 0.65 + 1.6 * (score.0 as f32 - 1.0);
+        camera.translation = Vec3::new(x, y, z);
+        
         false
     });
 }
@@ -164,7 +180,11 @@ fn check_ball(
 fn start_assets_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(GameAssets {
         scene: asset_server.load("Classroom.glb#Scene0"),
-        extra: asset_server.load("Classroom_Extra.glb#Scene0"),
+        row1: asset_server.load("row_1.glb#Scene0"),
+        row2: asset_server.load("row_2.glb#Scene0"),
+        row3: asset_server.load("row_3.glb#Scene0"),
+        row4: asset_server.load("row_4.glb#Scene0"),
+        //extra: asset_server.load("Classroom_Extra.glb#Scene0"),
         bin: asset_server.load("models/bin.glb#Scene0"),
         ball: asset_server.load("models/paper_ball.glb#Scene0"),
         ..default()
@@ -193,10 +213,19 @@ fn setup(
 ) {
     rapier_context.into_inner().integration_parameters.max_ccd_substeps = 4;
 
+    let xs = [3_f32, 1_f32, -1_f32, -3_f32];
+    let x = xs[rand::thread_rng().gen_range(0..4)];
+    let y = 1.25;
+    let z = 0.65;
+
     commands.spawn((
         Camera3d::default(),
+        Projection::Perspective(PerspectiveProjection {
+            near: 0.2,
+            ..default()
+        }),
         IsDefaultUiCamera,
-        Transform::from_xyz(0.4, 1.742, 5.86).with_rotation(Quat::from_rotation_y(0_f32.to_radians())),
+        Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(0_f32.to_radians())),
         CameraRotation(0.0, 0.0)
     ));
 
@@ -214,19 +243,23 @@ fn setup(
     ));
 
     commands.spawn((
-        Text::new("Score: 0"),
-        ScoreText
+        Text::new("Level 1"),
+        LevelText
     ));
 
     commands.spawn(SceneRoot(game_assets.scene.clone()));
+    commands.spawn(SceneRoot(game_assets.row1.clone()));
+    commands.spawn(SceneRoot(game_assets.row2.clone()));
+    commands.spawn(SceneRoot(game_assets.row3.clone()));
+    commands.spawn(SceneRoot(game_assets.row4.clone()));
     commands.spawn(SceneRoot(game_assets.bin.clone()));
-    game_state.set(GameState::Spawned);
+    game_state.set(GameState::Play);
 }
 
 fn setup_colliders(
     mut commands: Commands,
     asset_server: Res<Assets<Mesh>>,
-    game_assets: Res<GameAssets>,
+    //game_assets: Res<GameAssets>,
     query: Query<(&Mesh3d, &GlobalTransform)>
 ) {
     let flags = TriMeshFlags::FIX_INTERNAL_EDGES | TriMeshFlags::DELETE_DUPLICATE_TRIANGLES;
