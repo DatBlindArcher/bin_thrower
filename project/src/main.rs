@@ -34,6 +34,7 @@ struct ScoreText;
 #[derive(Default, Resource)]
 struct GameAssets {
     scene: Handle<Scene>,
+    extra: Handle<Scene>,
     bin: Handle<Scene>,
     ball: Handle<Scene>,
 }
@@ -124,7 +125,7 @@ fn spawn_ball(
             Ccd::enabled(),
             Sleeping::disabled(),
             Collider::ball(1.0),
-            Restitution::coefficient(0.7),
+            Restitution::coefficient(0.4),
             GravityScale(0.5),
             Transform::from_translation(camera.translation + camera.forward() * 0.02).with_scale(Vec3::new(0.05,0.05,0.05)),
             ExternalImpulse {
@@ -163,6 +164,7 @@ fn check_ball(
 fn start_assets_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(GameAssets {
         scene: asset_server.load("Classroom.glb#Scene0"),
+        extra: asset_server.load("Classroom_Extra.glb#Scene0"),
         bin: asset_server.load("models/bin.glb#Scene0"),
         ball: asset_server.load("models/paper_ball.glb#Scene0"),
         ..default()
@@ -189,7 +191,7 @@ fn setup(
     mut game_state: ResMut<NextState<GameState>>,
     rapier_context: Single<&mut RapierContext>
 ) {
-    rapier_context.into_inner().integration_parameters.max_ccd_substeps = 8;
+    rapier_context.into_inner().integration_parameters.max_ccd_substeps = 4;
 
     commands.spawn((
         Camera3d::default(),
@@ -224,6 +226,7 @@ fn setup(
 fn setup_colliders(
     mut commands: Commands,
     asset_server: Res<Assets<Mesh>>,
+    game_assets: Res<GameAssets>,
     query: Query<(&Mesh3d, &GlobalTransform)>
 ) {
     let flags = TriMeshFlags::FIX_INTERNAL_EDGES | TriMeshFlags::DELETE_DUPLICATE_TRIANGLES;
@@ -236,6 +239,8 @@ fn setup_colliders(
             transform.compute_transform()
         ));
     }
+
+    commands.spawn(SceneRoot(game_assets.extra.clone()));
 }
 
 fn main() {
