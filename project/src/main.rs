@@ -1,28 +1,51 @@
 use bevy::{
-    prelude::*,
-    pbr::{CascadeShadowConfigBuilder, DirectionalLightShadowMap},
-    render::camera::{Exposure, PhysicalCameraParameters},
-    input::mouse::*,
-    window::*
+    prelude::*, 
+    window::*,
+    input::mouse::*, 
+    input::touch::*
 };
 use bevy_rapier3d::prelude::*;
 
-#[derive(Resource, Default, Deref, DerefMut)]
-struct Parameters(PhysicalCameraParameters);
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, States, Default)]
+enum GameState {
+    #[default]
+    Loading,
+    Loaded,
+    Spawned,
+    //Level1,
+    //Level2,
+    //Level3,
+    //Level4,
+    //Level5
+}
 
 #[derive(Component)]
 struct CameraRotation(f32, f32);
 
+#[derive(Component)]
+struct Ball;
+
+#[derive(Resource)]
+struct Score(i32);
+
+#[derive(Component)]
+struct ScoreText;
+
+#[derive(Default, Resource)]
+struct GameAssets {
+    scene: Handle<Scene>,
+    bin: Handle<Scene>,
+    ball: Handle<Scene>,
+}
+
 fn game_run() {
     App::new()
         .insert_resource(ClearColor(Color::srgba_u8(127, 201, 255, 255)))
-        .insert_resource(DirectionalLightShadowMap { size: 4096 })
-        .insert_resource(Parameters(PhysicalCameraParameters {
-            aperture_f_stops: 1.0,
-            shutter_speed_s: 1.0 / 125.0,
-            sensitivity_iso: 100.0,
-            sensor_height: 0.01866,
-        }))
+        .insert_resource(AmbientLight {
+            color: Color::default(),
+            brightness: 400.0,
+        })
+        .insert_resource(Score(0))
         
         .add_plugins(DefaultPlugins.set(AssetPlugin {
             watch_for_changes_override: Some(true),
@@ -35,41 +58,149 @@ fn game_run() {
             }),
             ..default()
         }))
-        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
-        .add_plugins(RapierDebugRenderPlugin::default())
+        .add_plugins(RapierPhysicsPlugin::<NoUserData>::default().in_fixed_schedule())
+        //.add_plugins(RapierDebugRenderPlugin::default())
+        .init_state::<GameState>()
 
-        .add_systems(Startup, setup)
-        
-        .add_systems(Update, look_mouse)
+        .add_systems(OnEnter(GameState::Loading), start_assets_loading)
+        .add_systems(Update, check_if_loaded.run_if(in_state(GameState::Loading)))
+        .add_systems(OnEnter(GameState::Loaded), setup)
+        .add_systems(OnEnter(GameState::Spawned), setup_colliders)
+
+        .add_systems(Update, look_mouse.run_if(in_state(GameState::Spawned)))
+        .add_systems(Update, spawn_ball.run_if(in_state(GameState::Spawned)))
+        .add_systems(Update, check_ball.run_if(in_state(GameState::Spawned)))
 
         .run();
 }
 
-fn look_mouse(q_camera: Single<(&mut Transform, &mut CameraRotation), With<Camera>>, mut mouse_motion: EventReader<MouseMotion>) {
+fn look_mouse(
+    q_camera: Single<(&mut Transform, &mut CameraRotation), With<Camera>>, 
+    mut mouse_motion: EventReader<MouseMotion>, 
+    window: Query<&Window>,
+) {
+    let window = window.single();
     let (mut camera, mut rotation) = q_camera.into_inner();
 
     for ev in mouse_motion.read() {
-        rotation.0 += ev.delta.x / 2.0;
-        rotation.1 += ev.delta.y / 2.0;
+        rotation.0 += ev.delta.x / window.resolution.width() * 360.0;
+        rotation.1 += ev.delta.y / window.resolution.height() * 360.0;
+        rotation.1 = rotation.1.clamp(-90.0, 90.0);
         camera.rotation = Quat::from_euler(EulerRot::ZYX, 0.0, -rotation.0.to_radians(), -rotation.1.to_radians());
     }
 }
 
+fn spawn_ball(
+    mut commands: Commands,
+    game_assets: Res<GameAssets>,
+    q_camera: Single<&Transform, With<Camera>>, 
+    buttons: Res<ButtonInput<MouseButton>>,
+    mut touch_evr: EventReader<TouchInput>,
+    balls: Query<Entity, With<Ball>>
+) {
+    let mut release = false;
+
+    for ev in touch_evr.read() {
+        if ev.phase == TouchPhase::Ended {
+            release = true;
+        }
+    }
+
+    if buttons.just_released(MouseButton::Left) {
+        release = true;
+    }
+
+    if release {
+        let camera = q_camera.into_inner();
+        let force = camera.forward() * 40.0;
+
+        for entity in balls.iter() {
+            commands.entity(entity).despawn();
+        }
+        
+        commands.spawn((SceneRoot(game_assets.ball.clone()),
+            Ball,
+            RigidBody::Dynamic,
+            Ccd::enabled(),
+            Sleeping::disabled(),
+            Collider::ball(1.0),
+            Restitution::coefficient(0.7),
+            GravityScale(0.5),
+            Transform::from_translation(camera.translation + camera.forward() * 0.02).with_scale(Vec3::new(0.05,0.05,0.05)),
+            ExternalImpulse {
+                impulse: force,
+                torque_impulse: Vec3::ZERO
+            }
+        ));
+    }
+}
+
+fn check_ball(
+    mut commands: Commands,
+    mut score: ResMut<Score>,
+    balls: Query<Entity, With<Ball>>,
+    text: Single<&mut Text, With<ScoreText>>,
+    rapier_context: Single<&RapierContext>
+) {
+    let shape = Collider::ball(0.33/2.0);
+    let shape_pos = Vec3::new(3.5917, 0.15, -3.6764);
+    let shape_rot = Quat::IDENTITY;
+    let filter = QueryFilter::from(QueryFilterFlags::ONLY_DYNAMIC);
+    let mut t = text.into_inner();
+
+    rapier_context.intersections_with_shape(shape_pos, shape_rot, &shape, filter, |_| {
+        score.0 += 1;
+        t.0 = format!("Score: {}", score.0).to_string();
+
+        for entity in balls.iter() {
+            commands.entity(entity).despawn();
+        }
+
+        false
+    });
+}
+
+fn start_assets_loading(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.insert_resource(GameAssets {
+        scene: asset_server.load("Classroom.glb#Scene0"),
+        bin: asset_server.load("models/bin.glb#Scene0"),
+        ball: asset_server.load("models/paper_ball.glb#Scene0"),
+        ..default()
+    });
+}
+
+fn check_if_loaded(
+    mut scenes: ResMut<Assets<Scene>>,
+    game_assets: Res<GameAssets>,
+    mut game_state: ResMut<NextState<GameState>>,
+) {
+    let _ = if let Some(scene) = scenes.get_mut(&game_assets.scene) {
+        scene
+    } else {
+        return;
+    };
+
+    game_state.set(GameState::Loaded);
+}
+
 fn setup(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    parameters: Res<Parameters>,
+    game_assets: Res<GameAssets>,
+    mut game_state: ResMut<NextState<GameState>>,
+    rapier_context: Single<&mut RapierContext>
 ) {
+    rapier_context.into_inner().integration_parameters.max_ccd_substeps = 8;
+
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.4, 1.742, 8.86).with_rotation(Quat::from_rotation_y(0_f32.to_radians())),
-        Exposure::from_physical_camera(**parameters),
+        IsDefaultUiCamera,
+        Transform::from_xyz(0.4, 1.742, 5.86).with_rotation(Quat::from_rotation_y(0_f32.to_radians())),
         CameraRotation(0.0, 0.0)
     ));
 
     commands.spawn((
         DirectionalLight {
-            illuminance: light_consts::lux::OVERCAST_DAY,
+            illuminance: 10000.0,
             shadows_enabled: true,
             ..default()
         },
@@ -78,20 +209,33 @@ fn setup(
             rotation: Quat::from_euler(EulerRot::YXZ, -90_f32.to_radians(), -25_f32.to_radians(), 0_f32.to_radians()),
             ..default()
         },
-        // The default cascade config is designed to handle large scenes.
-        // As this example has a much smaller world, we can tighten the shadow
-        // bounds for better visual quality.
-        CascadeShadowConfigBuilder {
-            first_cascade_far_bound: 4.0,
-            maximum_distance: 20.0,
-            ..default()
-        }
-        .build(),
     ));
 
-    commands.spawn(SceneRoot(asset_server.load(
-        GltfAssetLabel::Scene(0).from_asset("scene/scene_wn.glb"),
-    )));
+    commands.spawn((
+        Text::new("Score: 0"),
+        ScoreText
+    ));
+
+    commands.spawn(SceneRoot(game_assets.scene.clone()));
+    commands.spawn(SceneRoot(game_assets.bin.clone()));
+    game_state.set(GameState::Spawned);
+}
+
+fn setup_colliders(
+    mut commands: Commands,
+    asset_server: Res<Assets<Mesh>>,
+    query: Query<(&Mesh3d, &GlobalTransform)>
+) {
+    let flags = TriMeshFlags::FIX_INTERNAL_EDGES | TriMeshFlags::DELETE_DUPLICATE_TRIANGLES;
+
+    for (mesh3d, transform) in query.iter() {
+        let mesh = asset_server.get(mesh3d).unwrap();
+
+        commands.spawn((
+            Collider::from_bevy_mesh(mesh, &ComputedColliderShape::TriMesh(flags)).unwrap(),
+            transform.compute_transform()
+        ));
+    }
 }
 
 fn main() {
