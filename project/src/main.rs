@@ -203,7 +203,7 @@ fn setup(
     commands.spawn((
         DirectionalLight {
             illuminance: 10000.0,
-            shadows_enabled: true,
+            shadows_enabled: false,
             ..default()
         },
         Transform {
@@ -240,7 +240,7 @@ fn setup_colliders(
         ));
     }
 
-    commands.spawn(SceneRoot(game_assets.extra.clone()));
+    //commands.spawn(SceneRoot(game_assets.extra.clone()));
 }
 
 fn main() {
