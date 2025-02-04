@@ -170,7 +170,7 @@ fn check_ball(
         let xs = [3_f32, 1_f32, -1_f32, -3_f32];
         let x = xs[rand::thread_rng().gen_range(0..4)];
         let y = 1.25;
-        let z = 0.65 + 1.6 * (score.0 as f32 - 1.0);
+        let z = 0.68 + 1.6 * (score.0 as f32 - 1.0);
         camera.translation = Vec3::new(x, y, z);
         
         false
@@ -216,12 +216,12 @@ fn setup(
     let xs = [3_f32, 1_f32, -1_f32, -3_f32];
     let x = xs[rand::thread_rng().gen_range(0..4)];
     let y = 1.25;
-    let z = 0.65;
+    let z = 0.68;
 
     commands.spawn((
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            near: 0.2,
+            near: 0.25,
             ..default()
         }),
         IsDefaultUiCamera,
