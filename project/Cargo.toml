@@ -10,8 +10,12 @@ edition = "2024"
 rand = { version = "*" }
 bevy = { version = "0.15.1" }
 bevy_rapier3d = { version = "*", features = [ "simd-nightly", "wasm-bindgen" ] }
+bevy_tween = { version = "*" }
 
 [profile.release]
 opt-level = 'z'
 lto = true
 codegen-units = 1
+
+[profile.dev.package.bevy_rapier3d]
+opt-level = 3
